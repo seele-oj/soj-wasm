@@ -8,7 +8,6 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 
-/// StarField는 별(Star)과 메테오(Meteor)를 함께 관리합니다.
 #[wasm_bindgen]
 pub struct StarField {
     gl: GL,
@@ -24,21 +23,19 @@ pub struct StarField {
     meteor_program: WebGlProgram,
 }
 
-/// 별(Star) 구조체
 struct Star {
     x: f32,
     y: f32,
-    radius: f32,      // 0.005 ~ 0.04 (POINT_SCALE을 곱하면 약 0.5px ~ 4px)
+    radius: f32,
     vx: f32,
     vy: f32,
-    base_alpha: f32,  // 0.5, 0.7, 0.9 중 선택
-    twinkle_phase: f32, // 0 ~ 2π
-    twinkle_speed: f32, // 0.002 ~ 0.005
+    base_alpha: f32,
+    twinkle_phase: f32,
+    twinkle_speed: f32,
     alpha: f32,       
     color: [f32; 3],
 }
 
-/// 메테오(Meteor) 구조체 (별똥별)
 struct Meteor {
     x: f32, 
     y: f32,
@@ -46,12 +43,10 @@ struct Meteor {
     vy: f32,
     lifetime: f32,
     max_lifetime: f32,
-    // point_size는 사용하지 않고, trail quad를 직접 구성합니다.
     point_size: f32,
     color: [f32; 3],
 }
 
-// 메테오 trail 길이와 두께
 const METEOR_TRAIL_LENGTH: f32 = 300.0;
 const METEOR_WIDTH: f32 = 0.5;
 
@@ -64,7 +59,6 @@ impl StarField {
             .dyn_into::<HtmlCanvasElement>()
             .unwrap();
 
-        // 내부 해상도: CSS 크기 × devicePixelRatio
         let dpr = window().unwrap().device_pixel_ratio() as f32;
         let css_width = canvas.client_width() as f32;
         let css_height = canvas.client_height() as f32;
@@ -88,10 +82,8 @@ impl StarField {
         let mut stars = Vec::with_capacity(num_stars);
         Self::init_stars(&mut stars, num_stars, width, height);
 
-        // 메테오 빈 벡터
         let meteors = Vec::new();
 
-        // ── 배경 셰이더 ─────────────────────────────────────────────────
         let background_vertex_shader_source = r#"
             attribute vec2 a_position;
             attribute vec3 a_color;
@@ -115,7 +107,6 @@ impl StarField {
         let background_program = link_program(&gl, &background_vertex_shader, &background_fragment_shader)
             .expect("Background program link error");
 
-        // ── 별 셰이더 ─────────────────────────────────────────────────
         let star_vertex_shader_source = r#"
             attribute vec2 a_position;
             attribute float a_pointSize;
@@ -150,7 +141,6 @@ impl StarField {
         let star_program = link_program(&gl, &star_vertex_shader, &star_fragment_shader)
             .expect("Star program link error");
 
-        // ── 메테오 셰이더 ─────────────────────────────────────────────
         let meteor_vertex_shader_source = r#"
             attribute vec2 a_position;
             attribute float a_alpha;
@@ -185,7 +175,6 @@ impl StarField {
         let meteor_program = link_program(&gl, &meteor_vertex_shader, &meteor_fragment_shader)
             .expect("Meteor program link error");
 
-        // ── 배경 풀스크린 quad 데이터 ────────────────────────────────
         let bottom_color = [54.0/255.0, 69.0/255.0, 125.0/255.0];
         let top_color = [25.0/255.0, 45.0/255.0, 105.0/255.0];
         let background_vertices: [f32; 6 * 5] = [
@@ -217,7 +206,6 @@ impl StarField {
         }
     }
 
-    /// 초기 별 생성 로직 (new에서 사용)
     fn init_stars(stars: &mut Vec<Star>, num_stars: usize, width: f32, height: f32) {
         let center_x = width / 2.0;
         let center_y = height / 2.0;
@@ -234,7 +222,6 @@ impl StarField {
                 x = js_sys::Math::random() as f32 * width;
                 let chance = js_sys::Math::random() as f32;
                 if chance < 0.8 {
-                    // Box–Muller 변환
                     let u1 = (js_sys::Math::random() as f32).max(0.000001);
                     let u2 = js_sys::Math::random() as f32;
                     let gaussian = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos();
@@ -274,7 +261,6 @@ impl StarField {
         }
     }
 
-    /// resize 메서드: 캔버스 크기가 변경될 때 내부 해상도와 별들을 업데이트
     fn resize(&mut self) {
         let dpr = window().unwrap().device_pixel_ratio() as f32;
         let css_width = self.canvas.client_width() as f32;
@@ -284,33 +270,25 @@ impl StarField {
         
         let (old_width, old_height) = self.resolution;
         
-        // 캔버스 크기 재설정
         self.canvas.set_width(new_width as u32);
         self.canvas.set_height(new_height as u32);
         self.resolution = (new_width, new_height);
 
         if old_width <= 0.0 || old_height <= 0.0 {
-            // 이전 크기가 0이면 그냥 반환
             return;
         }
 
-        // ── 1) 줄어든 영역에 있던 별 제거 ─────────────────────────────
         self.stars.retain(|star| star.x >= 0.0 && star.x <= new_width &&
                            star.y >= 0.0 && star.y <= new_height);
 
-        // ── 2) 확장된 영역(= 새 면적 - 이전 면적)에 별 추가 ──────────
         let old_area = old_width * old_height;
         let new_area = new_width * new_height;
         if new_area > old_area {
-            // 기존 밀도
             let density = self.stars.len() as f32 / old_area.max(1.0);
-            // 새로 추가해야 할 별 개수
             let extra_area = new_area - old_area;
             let stars_to_add = (density * extra_area).ceil() as usize;
 
             for _ in 0..stars_to_add {
-                // difference 영역에만 별을 생성:
-                // while-approach로 pick_random_in_diff_area:
                 let (nx, ny) = pick_random_in_diff_area(old_width, old_height, new_width, new_height);
                 
                 let r = js_sys::Math::random() as f32;
@@ -379,7 +357,6 @@ impl StarField {
             self.gl.buffer_data_with_array_buffer_view(GL::ARRAY_BUFFER, &star_array, GL::DYNAMIC_DRAW);
         }
         
-        // 메테오 업데이트
         if (js_sys::Math::random() as f32) < 0.001 {
             let x = (js_sys::Math::random() as f32) * self.resolution.0;
             let y = (js_sys::Math::random() as f32) * self.resolution.1;
@@ -405,7 +382,6 @@ impl StarField {
         }
         self.meteors.retain(|meteor| meteor.lifetime < meteor.max_lifetime);
         
-        // 메테오 quad geometry
         let mut meteor_data = Vec::new();
         for meteor in &self.meteors {
             let head_x = meteor.x;
@@ -432,7 +408,6 @@ impl StarField {
             let base = 1.0 - (meteor.lifetime / meteor.max_lifetime);
             let head_alpha = base;
             let tail_alpha = 0.0;
-            // Triangle 1: v0, v1, v2
             meteor_data.push(v0x);
             meteor_data.push(v0y);
             meteor_data.push(head_alpha);
@@ -454,7 +429,6 @@ impl StarField {
             meteor_data.push(meteor.color[1]);
             meteor_data.push(meteor.color[2]);
             
-            // Triangle 2: v1, v2, v3
             meteor_data.push(v1x);
             meteor_data.push(v1y);
             meteor_data.push(head_alpha);
@@ -489,7 +463,6 @@ impl StarField {
         gl.clear_color(0.0, 0.0, 0.0, 1.0);
         gl.clear(GL::COLOR_BUFFER_BIT);
         
-        // 배경 그라디언트 quad
         gl.use_program(Some(&self.background_program));
         gl.bind_buffer(GL::ARRAY_BUFFER, Some(&self.background_buffer));
         let pos_attrib_location = gl.get_attrib_location(&self.background_program, "a_position") as u32;
@@ -503,7 +476,6 @@ impl StarField {
         );
         gl.draw_arrays(GL::TRIANGLES, 0, 6);
         
-        // 별들 (GL::POINTS)
         gl.use_program(Some(&self.star_program));
         gl.bind_buffer(GL::ARRAY_BUFFER, Some(&self.star_buffer));
         let star_stride = 7 * std::mem::size_of::<f32>() as i32;
@@ -524,7 +496,6 @@ impl StarField {
         }
         gl.draw_arrays(GL::POINTS, 0, self.stars.len() as i32);
         
-        // 메테오 (GL::TRIANGLES)
         gl.use_program(Some(&self.meteor_program));
         gl.bind_buffer(GL::ARRAY_BUFFER, Some(&self.meteor_buffer));
         let meteor_stride = 6 * std::mem::size_of::<f32>() as i32; // (x,y,alpha,r,g,b)
@@ -544,33 +515,24 @@ impl StarField {
     }
 }
 
-/// 윈도우 리사이즈 시 사용:  
-/// "새로 늘어난 영역"만 골라서 별을 생성하기 위해,  
-/// old_width x old_height → new_width x new_height 차이 영역에서만 뽑기
-/// while-approach를 사용해 (x, y)를 [0..new_width], [0..new_height] 중 골라서  
-/// (x<=old_width && y<=old_height)이면 버림.
 fn pick_random_in_diff_area(old_width: f32, old_height: f32, new_width: f32, new_height: f32) -> (f32, f32) {
     if new_width <= old_width && new_height <= old_height {
-        // 확장 없음
         return (js_sys::Math::random() as f32 * new_width,
                 js_sys::Math::random() as f32 * new_height);
     }
     loop {
         let x = js_sys::Math::random() as f32 * new_width;
         let y = js_sys::Math::random() as f32 * new_height;
-        // 새 영역 (즉, old_width보다 크거나, old_height보다 큰 범위)에서만
         if x > old_width || y > old_height {
             return (x, y);
         }
     }
 }
 
-/// WASM 애니메이션 루프 진입점
 #[wasm_bindgen]
 pub fn start_starfield(canvas_id: &str, num_stars: usize) {
     let star_field = Rc::new(RefCell::new(StarField::new(canvas_id, num_stars)));
     
-    // 윈도우 resize 이벤트 리스너 등록
     {
         let star_field_clone = star_field.clone();
         let resize_closure = Closure::wrap(Box::new(move || {
@@ -579,10 +541,9 @@ pub fn start_starfield(canvas_id: &str, num_stars: usize) {
         window().unwrap()
             .add_event_listener_with_callback("resize", resize_closure.as_ref().unchecked_ref())
             .unwrap();
-        resize_closure.forget(); // 메모리에서 drop되지 않도록
+        resize_closure.forget();
     }
     
-    // 애니메이션 루프
     let f: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::new(RefCell::new(None));
     let g = f.clone();
     
@@ -602,7 +563,6 @@ pub fn start_starfield(canvas_id: &str, num_stars: usize) {
         .unwrap();
 }
 
-/// 셰이더 컴파일 헬퍼 함수
 fn compile_shader(gl: &GL, shader_type: u32, source: &str) -> Result<WebGlShader, String> {
     let shader = gl.create_shader(shader_type).ok_or("Unable to create shader object")?;
     gl.shader_source(&shader, source);
@@ -617,7 +577,6 @@ fn compile_shader(gl: &GL, shader_type: u32, source: &str) -> Result<WebGlShader
     }
 }
 
-/// 셰이더 프로그램 연결 헬퍼 함수
 fn link_program(gl: &GL, vertex_shader: &WebGlShader, fragment_shader: &WebGlShader) -> Result<WebGlProgram, String> {
     let program = gl.create_program().ok_or("Unable to create shader program")?;
     gl.attach_shader(&program, vertex_shader);
